@@ -549,7 +549,7 @@
  
 <div id="toasts" class="fixed bottom-4 right-4 z-[3000] flex flex-col gap-2"></div>
  
-<!-- ИСПОЛЬЗУЕМ 10.8.1 ВЕРСИЮ ДЛЯ ИСКЛЮЧЕНИЯ БАГОВ И РАБОТЫ ВСЕХ МОДУЛЕЙ -->
+<!-- ИСПОЛЬЗУЕМ 10.8.1 ВЕРСИЮ -->
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
   import { getFirestore, collection, doc, getDocs, getDoc, setDoc, addDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
@@ -587,6 +587,12 @@
     setTimeout(() => el.remove(), 3500);
   }
 
+  // --- ҚАТЕЛЕРДІ КӨРСЕТУГЕ АРНАЛҒАН ЖАҢА ФУНКЦИЯ ---
+  function showFirebaseError(actionText, error) {
+    console.error(`FIREBASE ҚАТЕСІ (${actionText}):`, error);
+    alert(`ҚАТЕ ШЫҚТЫ!\n\nОрындалған әрекет: ${actionText}\nҚате коды: ${error.code || 'Белгісіз код'}\nСебебі: ${error.message || error}`);
+  }
+
   // --- ИССЛЕДОВАТЕЛЬСКИЕ ДАННЫЕ (Генерируются если база пуста) ---
   function generateResearchData(base = 340) {
     let arr = [];
@@ -615,9 +621,13 @@
   window.deleteStation = async (id) => {
     if(mockStations.length <= 1) { toast('Кем дегенде 1 бекет қалуы тиіс!'); return; }
     if(confirm('Бұл бекетті өшіргіңіз келетініне сенімдісіз бе? (Firebase базасынан өшіріледі)')) {
-      await deleteDoc(doc(db, "stations", id.toString()));
-      toast('Бекет Firebase-тен жойылды!');
-      await fetchFromFirebase();
+      try {
+        await deleteDoc(doc(db, "stations", id.toString()));
+        toast('Бекет Firebase-тен жойылды!');
+        await fetchFromFirebase();
+      } catch (error) {
+        showFirebaseError('Бекетті өшіру', error);
+      }
     }
   };
 
@@ -695,8 +705,7 @@
       
       updateUI();
     } catch(e) {
-      console.error(e);
-      toast('Қате: Базадан деректер алынбады!');
+      showFirebaseError('Базадан деректерді оқу (fetchFromFirebase)', e);
     }
   }
 
@@ -748,7 +757,13 @@
     };
 
     // Firebase Auth Storage Logic
-    async function saveUser() { await setDoc(doc(db, "settings", "currentUser"), currentUser); }
+    async function saveUser() { 
+      try {
+        await setDoc(doc(db, "settings", "currentUser"), currentUser); 
+      } catch (error) {
+        showFirebaseError('Қолданушы деректерін сақтау', error);
+      }
+    }
     
     $('formLogin').onsubmit = async (e) => {
       e.preventDefault(); currentUser.isAuth = true; await saveUser(); updateUI(); toast('Сәтті кірдіңіз!');
@@ -768,35 +783,56 @@
     };
 
     $('saveAnalyticsBtn').onclick = async () => {
-      analyticsData.historicalNotes = $('anHistoricalNotes').value;
-      analyticsData.forecastText = $('anForecastText').value;
-      await setDoc(doc(db, "settings", "analytics"), analyticsData);
-      toast('Зерттеу деректері Firebase-ке сақталды!');
+      try {
+        analyticsData.historicalNotes = $('anHistoricalNotes').value;
+        analyticsData.forecastText = $('anForecastText').value;
+        await setDoc(doc(db, "settings", "analytics"), analyticsData);
+        toast('Зерттеу деректері Firebase-ке сақталды!');
+      } catch (error) {
+        showFirebaseError('Аналитика деректерін сақтау', error);
+      }
     };
 
-    // Модальные окна (Исправление багов с закрытием)
+    // Модальные окна
     $('openEntry').onclick = () => {
       if(state.stations.length === 0) return toast('Бекеттер табылған жоқ!');
       $('entryDialog').showModal();
     };
     $('entryClose').onclick = $('entryCancel').onclick = () => $('entryDialog').close();
     
+    // ==========================================
+    // ЖАҢА ӨЛШЕМ ЕНГІЗУ (ҚАТЕНІ ҰСТАЙТЫН КОД)
+    // ==========================================
     $('entryForm').onsubmit = async (e) => {
       e.preventDefault();
-      const stId = Number($('fStation').value);
-      const newRecord = {
-        created_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
-        level: Number($('fLevel').value),
-        temperature: Number($('fTemp').value)
-      };
-      await addDoc(collection(db, "measurements"), { stationId: stId, ...newRecord });
-      let st = mockStations.find(s => s.id === stId);
-      if(st) { st.latest_level = newRecord.level; await setDoc(doc(db, "stations", stId.toString()), st); }
+      const btn = $('entryForm').querySelector('button[type="submit"]');
+      try {
+        btn.textContent = 'Сақталуда...'; btn.disabled = true;
 
-      $('entryDialog').close();
-      toast('Жаңа өлшем базаға сақталды!');
-      await fetchFromFirebase();
-      $('entryForm').reset();
+        const stId = Number($('fStation').value);
+        const newRecord = {
+          created_at: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          level: Number($('fLevel').value),
+          temperature: Number($('fTemp').value)
+        };
+        
+        await addDoc(collection(db, "measurements"), { stationId: stId, ...newRecord });
+        
+        let st = mockStations.find(s => s.id === stId);
+        if(st) { 
+          st.latest_level = newRecord.level; 
+          await setDoc(doc(db, "stations", stId.toString()), st); 
+        }
+
+        $('entryDialog').close();
+        toast('Жаңа өлшем базаға сақталды!');
+        await fetchFromFirebase();
+        $('entryForm').reset();
+      } catch (error) {
+        showFirebaseError('Жаңа өлшемді (су деңгейін) базаға қосу', error);
+      } finally {
+        btn.textContent = 'Сақтау'; btn.disabled = false;
+      }
     };
 
     $('openAddStation').onclick = () => {
@@ -806,32 +842,47 @@
     };
     $('stationClose').onclick = $('stationCancel').onclick = () => $('stationDialog').close();
     
+    // ==========================================
+    // ЖАҢА БЕКЕТ ҚОСУ (ҚАТЕНІ ҰСТАЙТЫН КОД)
+    // ==========================================
     $('stationForm').onsubmit = async (e) => {
       e.preventDefault();
-      const idVal = $('editStationId').value;
-      const name = $('stName').value;
-      const lat = Number($('stLat').value);
-      const lng = Number($('stLng').value);
-      const lvl = Number($('stLevel').value);
+      const btn = $('stationForm').querySelector('button[type="submit"]');
+      try {
+        btn.textContent = 'Сақталуда...'; btn.disabled = true;
 
-      if(idVal) {
-        let st = mockStations.find(s => s.id == idVal);
-        if(st) {
-          st.name = name; st.lat = lat; st.lng = lng; st.latest_level = lvl;
-          await setDoc(doc(db, "stations", idVal.toString()), st);
+        const idVal = $('editStationId').value;
+        const name = $('stName').value;
+        const lat = Number($('stLat').value);
+        const lng = Number($('stLng').value);
+        const lvl = Number($('stLevel').value);
+
+        if(idVal) {
+          let st = mockStations.find(s => s.id == idVal);
+          if(st) {
+            st.name = name; st.lat = lat; st.lng = lng; st.latest_level = lvl;
+            await setDoc(doc(db, "stations", idVal.toString()), st);
+          }
+          toast('Бекет жаңартылды!');
+        } else {
+          const newId = Date.now();
+          const newSt = { id: newId, name, lat, lng, latest_level: lvl };
+          await setDoc(doc(db, "stations", newId.toString()), newSt);
+          
+          let initialData = generateResearchData(lvl);
+          for(let m of initialData) {
+            await addDoc(collection(db, "measurements"), { stationId: newId, ...m });
+          }
+          toast('Жаңа бекет қосылды!');
         }
-        toast('Бекет жаңартылды!');
-      } else {
-        const newId = Date.now();
-        const newSt = { id: newId, name, lat, lng, latest_level: lvl };
-        await setDoc(doc(db, "stations", newId.toString()), newSt);
-        
-        let initialData = generateResearchData(lvl);
-        for(let m of initialData) await addDoc(collection(db, "measurements"), { stationId: newId, ...m });
-        toast('Жаңа бекет қосылды!');
+        $('stationDialog').close();
+        await fetchFromFirebase();
+        $('stationForm').reset();
+      } catch (error) {
+        showFirebaseError('Жаңа бекетті (станцияны) базаға сақтау', error);
+      } finally {
+        btn.textContent = 'Сақтау'; btn.disabled = false;
       }
-      $('stationDialog').close();
-      await fetchFromFirebase();
     };
 
     $('stationSelect').onchange = (e) => { state.currentId = Number(e.target.value); loadMeasurementsUI(); };
